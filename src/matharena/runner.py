@@ -174,9 +174,16 @@ class Runner:
             model_config_path = os.path.join("configs", solver_config["model_config"] + ".yaml")
             with open(model_config_path, "r") as f:
                 model_config = yaml.safe_load(f)
-            
+
             if "other_params" in model_config:
                 model_config.pop("other_params")
+
+            # Merge any extra fields from the agent config into scaffold_config
+            # This allows per-model overrides like n_samples
+            reserved_keys = {"type", "model_config", "scaffold_config", "human_readable_id"}
+            for key, value in solver_config.items():
+                if key not in reserved_keys:
+                    scaffold_config[key] = value
 
             solver_config = {
                 "human_readable_id": solver_config["human_readable_id"],

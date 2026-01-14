@@ -170,7 +170,7 @@ class Runs:
         assert len(self.detailed_costs) == self.N
 
         # Check total cost
-        for k in ["cost", "input_tokens", "output_tokens", "time"]:
+        for k in ["cost", "input_tokens", "output_tokens", "reasoning_tokens", "time"]:
             if k not in self.cost:
                 logger.warning(f"Missing total {k} in {self.path}")
                 if any(dc.get(k, None) is None for dc in self.detailed_costs):
@@ -257,7 +257,7 @@ class Runs:
     def update_aggregates(self):
         self.N = len(self.messages)
         self.cost = {}
-        for k in ["cost", "input_tokens", "output_tokens", "time", "retries", "request_time"]:
+        for k in ["cost", "input_tokens", "output_tokens", "reasoning_tokens", "time", "retries", "request_time"]:
             vals = [dc.get(k, None) for dc in self.detailed_costs]
             if any(v is None for v in vals):
                 self.cost[k] = None

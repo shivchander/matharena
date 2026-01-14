@@ -276,12 +276,13 @@ class APIClient:
     class InternalRequestResult:
         """A class to hold the result of a request internally (below run_queries)."""
 
-        def __init__(self, conversation, input_tokens, output_tokens, n_retries=0, time=0):
+        def __init__(self, conversation, input_tokens, output_tokens, n_retries=0, time=0, reasoning_tokens=0):
             self.conversation = conversation
             self.input_tokens = input_tokens
             self.output_tokens = output_tokens
             self.n_retries = n_retries
             self.time = time
+            self.reasoning_tokens = reasoning_tokens
 
     def run_queries(self, queries, no_tqdm=False, ignore_tool_calls=False, custom_indices=None):
         """Only entry point: runs a given list of queries through the API.
@@ -333,6 +334,7 @@ class APIClient:
                     "cost": self._get_cost(result.input_tokens, result.output_tokens),
                     "input_tokens": result.input_tokens,
                     "output_tokens": result.output_tokens,
+                    "reasoning_tokens": result.reasoning_tokens,
                     "time": end_time - start_time,
                     "retries": result.n_retries,
                 }
@@ -361,6 +363,7 @@ class APIClient:
                     "cost": self._get_cost(result.input_tokens, result.output_tokens),
                     "input_tokens": result.input_tokens,
                     "output_tokens": result.output_tokens,
+                    "reasoning_tokens": result.reasoning_tokens,
                     "n_retries": result.n_retries,
                     "time": time.time() - start_time,
                     "request_time": result.time,
@@ -910,6 +913,7 @@ class APIClient:
         conversation = [m.copy() for m in messages]
         input_tokens = 0
         output_tokens = 0
+        reasoning_tokens = 0
         total_retries = 0
 
         for _ in range(total_max_tool_calls + 1):
@@ -952,6 +956,10 @@ class APIClient:
             # Update state: token counts and conversation (potentially execute tool calls)
             input_tokens += response.usage.input_tokens
             output_tokens += response.usage.output_tokens
+            # Capture reasoning tokens if available (OpenAI reasoning models)
+            if hasattr(response.usage, 'output_tokens_details') and response.usage.output_tokens_details is not None:
+                if hasattr(response.usage.output_tokens_details, 'reasoning_tokens'):
+                    reasoning_tokens += response.usage.output_tokens_details.reasoning_tokens or 0
 
             was_tool_call_executed = False
             for out in response.output:
@@ -1037,7 +1045,7 @@ class APIClient:
 
         if len(conversation) == len(messages):
             conversation.append({"role": "assistant", "content": ""})
-        return self.InternalRequestResult(conversation, input_tokens, output_tokens, n_retries=total_retries)
+        return self.InternalRequestResult(conversation, input_tokens, output_tokens, n_retries=total_retries, reasoning_tokens=reasoning_tokens)
 
     def _openai_query_chat_completions_api(self, client, idx, messages, ignore_tool_calls=False):
         """Queries the OpenAI API using chat completions API.
@@ -1067,6 +1075,7 @@ class APIClient:
         conversation = [m.copy() for m in messages]
         input_tokens = 0
         output_tokens = 0
+        reasoning_tokens = 0
         total_retries = 0
         max_output_tokens = self.kwargs.get(self.max_tokens_param, None)
 
@@ -1118,6 +1127,10 @@ class APIClient:
             # Update state: token counts and conversation (potentially execute tool calls)
             input_tokens += response.usage.prompt_tokens
             output_tokens += response.usage.total_tokens - response.usage.prompt_tokens
+            # Capture reasoning tokens if available (OpenAI reasoning models via chat completions)
+            if hasattr(response.usage, 'completion_tokens_details') and response.usage.completion_tokens_details is not None:
+                if hasattr(response.usage.completion_tokens_details, 'reasoning_tokens'):
+                    reasoning_tokens += response.usage.completion_tokens_details.reasoning_tokens or 0
             message = response.choices[0].message
             if self.context_limit is not None:
                 max_output_tokens = self.context_limit
@@ -1212,7 +1225,7 @@ class APIClient:
         if total_max_tool_calls > 0:
             logger.info(f"Finished on a loop without tool calls, after executing {nb_executed_tool_calls} calls total.")
 
-        return self.InternalRequestResult(conversation, input_tokens, output_tokens, n_retries=total_retries)
+        return self.InternalRequestResult(conversation, input_tokens, output_tokens, n_retries=total_retries, reasoning_tokens=reasoning_tokens)
 
     def _google_query_with_internal_tools(self, idx, messages):
         """Queries Google for BCN.

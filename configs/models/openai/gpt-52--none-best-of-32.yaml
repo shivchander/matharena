@@ -1,0 +1,5 @@
+type: agent
+model_config: models/openai/gpt-52--none
+scaffold_config: agent_scaffolds/best_of_n
+human_readable_id: GPT-5.2 (none) Best-of-32
+n_samples: 32
