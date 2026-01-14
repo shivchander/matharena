@@ -5,4 +5,6 @@ from .pure_model_solver import PureModelSolver
 from .selfcheck_agent import SelfcheckAgent
 from .deepseek_math import DeepSeekMathAgent
 from .best_of_n_agent import BestOfNAgent
+from .plan_tournament_agent import PlanTournamentAgent
+from .conditioned_solver_agent import ConditionedSolverAgent
 from .agent_pool import AgentPool

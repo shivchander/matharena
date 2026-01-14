@@ -290,6 +290,8 @@ class Runner:
         """
         solver_config_path = f"{self.solver_configs_dir}/{solver_name}.yaml"
         solver_config = self.load_solver_config(solver_config_path)
+        # Add competition info to solver_config for agents that need it (e.g., ConditionedSolverAgent)
+        solver_config["competition"] = self.comp_name
         output_dir = f"{self.base_output_dir}/{self.comp_name}/{solver_name}"
         os.makedirs(output_dir, exist_ok=True)
 

@@ -1,0 +1,120 @@
+scaffold_name: conditioned_solver
+n_threads: 4                      # Threads for AgentPool (parallelization across problems)
+
+# Conditioned solver parameters
+n_solutions: 4                    # Default M: number of solutions to generate
+solution_pool_size: 4             # Max concurrent solution generation requests
+match_pool_size: 4                # Max concurrent tournament match requests
+
+# Path to Agent 1's output (must be overridden in model config)
+# Format: "openai/gpt-52--none-plan-tournament" (relative to outputs/{competition}/)
+plan_source_model: null
+
+prompts:
+  conditioned_solver: |
+    You are a mathematical solver that must generate a full solution by strictly following a given textual latent.
+    The latent is a compressed strategy. You must treat it as ground truth guidance.
+
+    Rules:
+    - You MUST follow the latent's representation, lemmas, and execution plan.
+    - Do NOT introduce a new strategy or switch representations.
+    - Do NOT ignore or bypass any step in the execution plan.
+    - If a step is unclear, make the minimal reasonable interpretation consistent with the latent.
+    - If you believe a lemma is false or insufficient, note it briefly and proceed using the closest consistent version.
+    - Show full mathematical reasoning and derivations.
+    - You may compute, simplify, and derive formulas here.
+    - You must reach a final, complete solution.
+
+    Your job is to *execute the latent*, not rethink it.
+
+    Problem:
+    {{problem}}
+
+    Textual Latent:
+    {{plan}}
+
+    Generate the solution as follows:
+
+    1. Restate the core idea in your own words (1-2 sentences) to confirm alignment.
+    2. Translate the representation into formal mathematical objects and notation.
+    3. For each lemma L1, L2, L3, ... :
+       - State it clearly.
+       - Prove it rigorously or give a logically complete justification.
+    4. Follow the execution plan step by step:
+       - Explicitly label each step: "Step 1", "Step 2", ...
+       - At each step, mention which lemma(s) are being used.
+       - Carry out all necessary derivations and computations.
+    5. Assemble the results into a complete solution.
+    6. Present the final answer clearly and unambiguously.
+
+    Formatting rules:
+    - Keep the structure: Core idea -> Representation -> Lemmas -> Execution -> Final answer.
+    - Use standard mathematical notation.
+    - Be explicit and rigorous; do not skip logical steps.
+    - The final answer must be clearly separated and easy to extract.
+    - Put your final answer within \boxed{}.
+
+  solution_critic: |
+    You are a solution critic for mathematical problems.
+    Your job is to compare TWO complete solutions to the SAME problem and decide which one is more likely to be correct.
+
+    You must judge solutions only on:
+    - mathematical correctness,
+    - logical completeness,
+    - consistency with the problem statement,
+    - clarity and rigor of reasoning.
+
+    Do NOT try to improve or merge the solutions.
+    Do NOT invent a third solution.
+    Do NOT be influenced by style, verbosity, or confidence.
+    Pick exactly ONE winner.
+
+    Prefer the solution that:
+    1) Has no logical gaps or unjustified claims.
+    2) Uses valid reasoning in every step.
+    3) Correctly handles edge cases and constraints.
+    4) Reaches a final answer that is consistent with all prior steps.
+    5) Is internally self-consistent.
+
+    Treat this as a correctness test, not a beauty contest.
+
+    Problem:
+    {{problem}}
+
+    Solution A:
+    {{solution_a}}
+
+    Solution B:
+    {{solution_b}}
+
+    Evaluate the two solutions using the following rubric:
+
+    1. Correctness:
+    - Are all mathematical statements true?
+    - Are all transformations and inferences valid?
+
+    2. Completeness:
+    - Are all required cases handled?
+    - Are key steps justified rather than asserted?
+
+    3. Consistency:
+    - Does the solution stay aligned with the problem's conditions?
+    - Are there contradictions or silent assumptions?
+
+    4. Final Answer Validity:
+    - Is the final answer clearly stated?
+    - Does it logically follow from the preceding work?
+
+
+    Decision format:
+
+    First, write a short comparison (3-6 sentences) explaining:
+    - the strongest point of each solution,
+    - the most serious flaw (if any) in each solution.
+
+    Then output exactly one line:
+    Winner: Solution A
+    or
+    Winner: Solution B
+
+    No other output is allowed after the Winner line.
