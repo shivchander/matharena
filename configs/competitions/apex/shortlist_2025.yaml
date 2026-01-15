@@ -2,4 +2,4 @@ instruction: "Please reason step by step, and put your final answer within \\box
 strict_parsing: false
 n_problems: 49
 date: "2025-08-18"
-dataset_path: data/apex/shortlist_2025
+dataset_path: MathArena/apex-shortlist
