@@ -1,0 +1,7 @@
+type: agent
+human_readable_id: openai/gpt-52--plan-gen
+model_config: models/openai/gpt-52--none
+scaffold_config: agent_scaffolds/plan_generation
+# Use --n K at runner level to generate K plans (K separate runs)
+# Temperature optional - defaults to model's default
+# temperature: 1.0

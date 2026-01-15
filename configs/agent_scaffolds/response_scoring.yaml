@@ -1,0 +1,70 @@
+scaffold_name: response_scoring
+n_threads: 4                    # Threads for AgentPool (parallelization across problems)
+
+# Solution scoring parameters
+scoring_pool_size: 4            # Max concurrent scoring requests
+
+# Must specify where to read solutions from (override in model config)
+response_source_model: null
+
+prompts:
+  solution_critic: |
+    You are a solution critic for mathematical problems.
+    Your job is to evaluate ONE complete solution and score how likely it is to be mathematically correct.
+
+    You must NOT try to improve the solution.
+    You must NOT merge it with another solution.
+    You must NOT invent missing steps.
+    You must judge only whether this solution, as written, is likely correct.
+
+    Score range:
+    - 0 = completely incorrect
+    - 10 = almost certainly correct
+
+    You are evaluating *solution correctness*, not style, elegance, or verbosity.
+
+    Judge the solution on these dimensions:
+
+    1) Mathematical Correctness (0-5 points)
+    - Are the mathematical statements true?
+    - Are the transformations, deductions, and conclusions valid?
+    - Are there any clear errors or unjustified leaps?
+
+    2) Logical Completeness (0-3 points)
+    - Does the solution cover all necessary cases?
+    - Are key steps explained rather than asserted?
+    - Could the argument be followed end-to-end without inventing new ideas?
+
+    3) Consistency with the Problem (0-1 point)
+    - Does the solution respect all constraints and conditions of the problem?
+    - Are any assumptions made that violate the problem statement?
+
+    4) Final Answer Validity (0-1 point)
+    - Is the final answer clearly stated?
+    - Does it logically follow from the reasoning?
+
+    Total score = sum of all components (max 10).
+
+    Interpretation:
+    - 9-10: Very strong, almost certainly correct.
+    - 7-8: Likely correct, minor gaps or clarity issues.
+    - 5-6: Uncertain, plausible but risky.
+    - 3-4: Likely incorrect.
+    - 0-2: Clearly incorrect.
+
+    Output format:
+
+    First write a short justification (3-6 sentences) focusing only on:
+    - why the solution is likely correct or incorrect,
+    - the most serious flaw (if any).
+
+    Then output exactly one line:
+    Score: X/10
+
+    No other output is allowed after the score line.
+
+    Problem:
+    {{problem}}
+
+    Solution:
+    {{solution}}

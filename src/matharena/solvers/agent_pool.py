@@ -8,7 +8,19 @@ from loguru import logger
 from tqdm import tqdm
 
 from matharena.api_client import APIClient
-from matharena.solvers import BaseSolver, SelfcheckAgent, SolverResponse, DeepSeekMathAgent, BestOfNAgent, PlanTournamentAgent, ConditionedSolverAgent
+from matharena.solvers import (
+    BaseSolver,
+    SelfcheckAgent,
+    SolverResponse,
+    DeepSeekMathAgent,
+    BestOfNAgent,
+    PlanTournamentAgent,
+    ConditionedSolverAgent,
+    PlanGenerationAgent,
+    PlanScoringAgent,
+    PlanConditionedResponseAgent,
+    ResponseScoringAgent,
+)
 
 
 class AgentPool(BaseSolver):
@@ -22,6 +34,10 @@ class AgentPool(BaseSolver):
         "best_of_n": BestOfNAgent,
         "plan_tournament": PlanTournamentAgent,
         "conditioned_solver": ConditionedSolverAgent,
+        "plan_generation": PlanGenerationAgent,
+        "plan_scoring": PlanScoringAgent,
+        "plan_conditioned_response": PlanConditionedResponseAgent,
+        "response_scoring": ResponseScoringAgent,
     }
 
     def __init__(self, solver_config, default_prompt_template, default_api_client_args, last_chance_prompt):

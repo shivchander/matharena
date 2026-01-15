@@ -176,15 +176,15 @@ class Runs:
                 if any(dc.get(k, None) is None for dc in self.detailed_costs):
                     self.cost[k] = None
                 else:
-                    self.cost[k] = sum(dc[k] for dc in self.detailed_costs)
-            vals = [dc[k] for dc in self.detailed_costs]
+                    self.cost[k] = sum(dc.get(k, 0) for dc in self.detailed_costs)
+            vals = [dc.get(k) for dc in self.detailed_costs]
             if any([v is None for v in vals]):
                 if self.cost[k] is not None:
                     logger.warning(f"Total {k} mismatch in {self.path}: total {self.cost[k]} vs some details None")
             else:
                 if self.cost[k] != sum(vals):
                     logger.warning(
-                        f"Total {k} mismatch in {self.path}: aggregate {self.cost[k]} vs sum of details {sum(dc[k] for dc in self.detailed_costs)}"
+                        f"Total {k} mismatch in {self.path}: aggregate {self.cost[k]} vs sum of details {sum(dc.get(k, 0) for dc in self.detailed_costs)}"
                     )
 
         # Check for shady messages that should have been retries and drop them

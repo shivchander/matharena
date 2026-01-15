@@ -1,0 +1,9 @@
+type: agent
+human_readable_id: openai/gpt-52--resp-scoring
+model_config: models/openai/gpt-52--none
+scaffold_config: agent_scaffolds/response_scoring
+response_source_model: openai/gpt-52--cond-resp
+# Reads all M solutions from upstream (generated with --n M)
+# Can also read from PureModelSolver (e.g., openai/gpt-52--none)
+# Temperature optional for scoring model
+# temperature: 0.3
