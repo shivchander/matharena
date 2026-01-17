@@ -27,3 +27,11 @@ set -a && source .env && set +a && uv run python scripts/run.py --comp apex/shor
 
 # Step 4: Score solutions and select the best
 set -a && source .env && set +a && uv run python scripts/run.py --comp apex/shortlist_2025 --models openai/gpt-52--resp-scoring --n 1
+
+
+
+uv run python scripts/analyze_budget_accuracy.py \
+      --model anthropic/claude-sonnet-45-or-thinking \
+      --comp apex/shortlist_2025 \
+      --n-seeds 3 
+      --output-json results.json

@@ -4,57 +4,70 @@ n_threads: 8                    # Threads for AgentPool (parallelization across 
 # Best-of-N parameters
 n_samples: 8                    # Default number of candidate solutions to generate
 generation_pool_size: 4         # Max concurrent generation requests
-judging_pool_size: 4            # Max concurrent judging requests
+match_pool_size: 4              # Max concurrent tournament match requests
 
 prompts:
   critic: |
-    You are a strict mathematical solution critic for contest problems.
+    You are a solution critic for mathematical problems.
+    Your job is to compare TWO complete solutions to the SAME problem and decide which one is more likely to be correct.
 
-    You will be given:
-    1. A math contest problem.
-    2. A candidate solution.
+    You must judge solutions only on:
+    - mathematical correctness,
+    - logical completeness,
+    - consistency with the problem statement,
+    - clarity and rigor of reasoning.
 
-    Your task is to rigorously judge the mathematical correctness of the solution.
-    Presentation quality does NOT matter unless it prevents verifying correctness.
+    Do NOT try to improve or merge the solutions.
+    Do NOT invent a third solution.
+    Do NOT be influenced by style, verbosity, or confidence.
+    Pick exactly ONE winner.
 
-    You MUST NOT provide a corrected solution.
-    You MUST NOT reveal the correct final answer unless it is already present in the candidate solution.
-    You MAY do lightweight checking (spot-check algebra, verify key steps), but do not do full-length solving from scratch.
+    Prefer the solution that:
+    1) Has no logical gaps or unjustified claims.
+    2) Uses valid reasoning in every step.
+    3) Correctly handles edge cases and constraints.
+    4) Reaches a final answer that is consistent with all prior steps.
+    5) Is internally self-consistent.
 
-    ## Evaluation Criteria
+    Treat this as a correctness test, not a beauty contest.
 
-    1. Correctness of result (0-4 points):
-    - 4: Final answer is correct and consistent with the problem.
-    - 3: Final answer is likely correct but not fully justified; minor uncertainty remains.
-    - 2: Final answer might be correct but there are serious errors/unsupported leaps.
-    - 1: Final answer is likely incorrect.
-    - 0: No valid final result or clearly wrong.
+    Problem:
+    {{problem}}
 
-    2. Validity of reasoning (0-4 points):
-    - 4: All key steps are logically valid; no mathematical errors (algebra, counting, case handling, geometry claims).
-    - 3: Mostly valid with one minor gap or unproven claim that does not undermine the result.
-    - 2: Multiple gaps or at least one substantial error that could change the result.
-    - 1: Reasoning is largely flawed or relies on unjustified assumptions.
-    - 0: Reasoning is irrelevant or nonsensical.
+    Solution A:
+    {{solution_a}}
 
-    3. Completeness / coverage of cases (0-2 points):
-    - 2: All necessary cases/constraints are handled (domain, edge cases, extraneous roots, counting over/under, etc.).
-    - 1: Some constraints/cases are not explicitly checked but the approach plausibly covers them.
-    - 0: Missing critical casework/constraints; likely invalidates the answer.
+    Solution B:
+    {{solution_b}}
 
-    ## Scoring Rules
-    - Total score is 0 to 10.
-    - You MUST identify at least one weakness unless the solution is truly flawless.
-    - A score of 9+ is exceptional and rare; it must be competition-ready with no meaningful improvements needed.
+    Evaluate the two solutions using the following rubric:
 
-    ## Required Output Format (JSON only)
-    {
-      "reasoning": "<1-2 sentences summarizing the biggest flaw or uncertainty in correctness>",
-      "score": <integer from 0 to 10>
-    }
+    1. Correctness:
+    - Are all mathematical statements true?
+    - Are all transformations and inferences valid?
 
-    Do not include any text outside the JSON.
+    2. Completeness:
+    - Are all required cases handled?
+    - Are key steps justified rather than asserted?
 
-    Question: {{question}}
+    3. Consistency:
+    - Does the solution stay aligned with the problem's conditions?
+    - Are there contradictions or silent assumptions?
 
-    Solution: {{solution}}
+    4. Final Answer Validity:
+    - Is the final answer clearly stated?
+    - Does it logically follow from the preceding work?
+
+
+    Decision format:
+
+    First, write a short comparison (3-6 sentences) explaining:
+    - the strongest point of each solution,
+    - the most serious flaw (if any) in each solution.
+
+    Then output exactly one line:
+    Winner: Solution A
+    or
+    Winner: Solution B
+
+    No other output is allowed after the Winner line.

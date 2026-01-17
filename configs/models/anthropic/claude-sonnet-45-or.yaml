@@ -1,0 +1,12 @@
+model: anthropic/claude-sonnet-4.5
+api: openrouter
+max_tokens: 64000
+concurrent_requests: 49
+temperature: 1
+read_cost: 3
+write_cost: 15
+human_readable_id: Claude-Sonnet-4.5-OR
+date: "2025-01-16"
+other_params:
+  open: false
+  creator: Anthropic

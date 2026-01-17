@@ -1,11 +1,8 @@
-"""Best of N Agent: Generates N candidate solutions and uses LLM judge to select the best one."""
+"""Best of N Agent: Generates N candidate solutions and uses tournament selection to pick the best."""
 
 import copy
-import json
-import random
 import re
 import time
-import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from hashlib import md5
 from typing import Any, override
@@ -20,7 +17,7 @@ from matharena.solvers import BaseAgent, SolverResponse
 class BestOfNAgent(BaseAgent):
     """
     An agent that generates N candidate solutions for a math problem,
-    scores each using an LLM judge with a critic prompt, and returns the best one.
+    then runs a single-elimination tournament using pairwise comparison to select the best.
     """
 
     def __init__(self, batch_idx, problem_idx, run_idx, solver_config,
@@ -37,9 +34,9 @@ class BestOfNAgent(BaseAgent):
         self.RUN_ID = f"best_of_n_{self.model_config['model'].replace('/', '--')}_{self.problem_idx}_{parameter_hash}"
 
         # Configuration from scaffold (n_samples can be overridden in model config)
-        self.n_samples = self.scaffold_config.get("n_samples", 8)
+        self.n_samples = solver_config.get("n_samples", self.scaffold_config.get("n_samples", 8))
         self.generation_pool_size = self.scaffold_config.get("generation_pool_size", 4)
-        self.judging_pool_size = self.scaffold_config.get("judging_pool_size", 4)
+        self.match_pool_size = self.scaffold_config.get("match_pool_size", 4)
 
         # Load critic prompt from scaffold config
         critic_prompt = self.scaffold_config.get("prompts", {}).get("critic", None)
@@ -60,9 +57,6 @@ class BestOfNAgent(BaseAgent):
     def _query_with_cost(self, client: APIClient, query: list[dict[str, Any]]) -> tuple[list[dict], dict]:
         """
         A wrapper that runs a query and returns both the conversation and the per-call cost.
-        This duplicates some logic from _query to capture the actual per-call cost directly
-        (avoiding race conditions when running in parallel).
-
         Returns: (conversation, cost_dict) where cost_dict has cost, input_tokens, output_tokens, time.
         """
         start_time = time.time()
@@ -115,93 +109,133 @@ class BestOfNAgent(BaseAgent):
 
         return solutions, convos, costs
 
-    def _parse_critic_response(self, response: str) -> tuple[int, str]:
+    def _parse_winner(self, response: str) -> str:
         """
-        Parse JSON response from critic.
-        Expected format: {"reasoning": "...", "score": <0-10>}
-
-        Returns: (score, reasoning)
-        Falls back to score=0 on parse failure.
+        Parse the winner from the critic response.
+        Expected format: "Winner: Solution A" or "Winner: Solution B"
+        Returns: "A" or "B", defaults to "A" on parse failure.
         """
-        # Try direct JSON parse
-        try:
-            data = json.loads(response.strip())
-            score = int(data.get("score", 0))
-            reasoning = data.get("reasoning", "")
-            return (max(0, min(10, score)), reasoning)
-        except (json.JSONDecodeError, ValueError):
-            pass
+        # Look for "Winner: Solution A" or "Winner: Solution B"
+        match = re.search(r'Winner:\s*Solution\s*([AB])', response, re.IGNORECASE)
+        if match:
+            return match.group(1).upper()
 
-        # Try to extract JSON from response (model might add extra text)
-        json_match = re.search(r'\{[^{}]*"score"\s*:\s*\d+[^{}]*\}', response)
-        if json_match:
-            try:
-                data = json.loads(json_match.group())
-                score = int(data.get("score", 0))
-                reasoning = data.get("reasoning", "")
-                return (max(0, min(10, score)), reasoning)
-            except (json.JSONDecodeError, ValueError):
-                pass
+        # Fallback: look for just "A" or "B" after "Winner:"
+        match = re.search(r'Winner:\s*([AB])', response, re.IGNORECASE)
+        if match:
+            return match.group(1).upper()
 
-        # Fallback: try to find just a score
-        score_match = re.search(r'"score"\s*:\s*(\d+)', response)
-        if score_match:
-            return (int(score_match.group(1)), "Parse error - extracted score only")
+        logger.warning(f"[{self.bi}] Failed to parse winner from: {response[-200:]}")
+        return "A"  # Default fallback
 
-        logger.warning(f"[{self.bi}] Failed to parse critic response: {response[:200]}")
-        return (0, "Parse error")
-
-    def _judge_one_solution(self, solution: str) -> tuple[int, str, list[dict], dict]:
-        """Score a single solution using the critic prompt. Returns (score, reasoning, convo, cost_dict)."""
-        critic_prompt = self.critic_template.render(
-            question=self.stmt,
-            solution=solution
+    def _compare_solutions(self, sol_a: str, sol_b: str) -> tuple[str, str, list[dict], dict]:
+        """
+        Compare two solutions using the critic.
+        Returns (winner "A" or "B", reasoning, conversation, cost_dict).
+        """
+        prompt = self.critic_template.render(
+            problem=self.stmt,
+            solution_a=sol_a,
+            solution_b=sol_b
         )
-        convo = [{"role": "user", "content": critic_prompt}]
+        convo = [{"role": "user", "content": prompt}]
         convo, call_cost = self._query_with_cost(self.client, convo)
 
         response = convo[-1]["content"]
-        score, reasoning = self._parse_critic_response(response)
-        return score, reasoning, convo, call_cost
+        winner = self._parse_winner(response)
 
-    def _judge_all_solutions(self, solutions: list[str]) -> tuple[list[int], list[str], list[list[dict]], list[dict]]:
-        """Score all solutions in parallel. Returns (scores, reasonings, convos, costs)."""
-        results = [None] * len(solutions)
+        # Extract reasoning (everything before "Winner:")
+        reasoning_match = re.search(r'^(.*?)Winner:', response, re.DOTALL | re.IGNORECASE)
+        reasoning = reasoning_match.group(1).strip() if reasoning_match else response
 
-        with ThreadPoolExecutor(max_workers=self.judging_pool_size) as executor:
-            future_to_idx = {
-                executor.submit(self._judge_one_solution, sol): idx
-                for idx, sol in enumerate(solutions)
-            }
-            for future in as_completed(future_to_idx):
-                idx = future_to_idx[future]
-                score, reasoning, convo, call_cost = future.result()
-                results[idx] = (score, reasoning, convo, call_cost)
+        return winner, reasoning, convo, call_cost
 
-        scores = [r[0] for r in results]
-        reasonings = [r[1] for r in results]
-        convos = [r[2] for r in results]
-        costs = [r[3] for r in results]
+    def _run_one_match(self, solutions: list[str], idx_a: int, idx_b: int, round_num: int, match_num: int) -> dict:
+        """Run a single match and return match result dict."""
+        winner, reasoning, convo, call_cost = self._compare_solutions(solutions[idx_a], solutions[idx_b])
+        winner_idx = idx_a if winner == "A" else idx_b
 
-        return scores, reasonings, convos, costs
+        match_result = {
+            "a": idx_a,
+            "b": idx_b,
+            "winner": winner,
+            "winner_idx": winner_idx,
+            "reasoning": reasoning,
+            "cost": call_cost,
+        }
 
-    def _select_best_index(self, scores: list[int]) -> int:
+        # Record in history
+        self._add_history(
+            step=f"round_{round_num}_match_{match_num}",
+            timestep=2,
+            conversation=convo,
+            sol_a_idx=idx_a,
+            sol_b_idx=idx_b,
+            winner=winner,
+            winner_idx=winner_idx,
+            reasoning=reasoning,
+            cost=call_cost,
+        )
+
+        return match_result
+
+    def _run_tournament(self, solutions: list[str]) -> tuple[int, str, dict]:
         """
-        Return the index of the highest-scoring solution.
-        Random tie-breaking among tied highest scores.
+        Run single-elimination tournament on solutions.
+        Returns (winner_idx, winning_solution, bracket).
         """
-        max_score = max(scores)
-        best_indices = [i for i, s in enumerate(scores) if s == max_score]
-        return random.choice(best_indices)
+        current_round = list(range(len(solutions)))
+        bracket = {"rounds": []}
+        round_num = 0
+
+        while len(current_round) > 1:
+            next_round = []
+            round_matches = []
+            match_futures = []
+
+            # Run matches in parallel within this round
+            with ThreadPoolExecutor(max_workers=self.match_pool_size) as executor:
+                match_num = 0
+                for i in range(0, len(current_round) - 1, 2):
+                    idx_a, idx_b = current_round[i], current_round[i + 1]
+                    future = executor.submit(
+                        self._run_one_match, solutions, idx_a, idx_b, round_num, match_num
+                    )
+                    match_futures.append((future, match_num))
+                    match_num += 1
+
+                # Collect results
+                for future, _ in match_futures:
+                    match_result = future.result()
+                    next_round.append(match_result["winner_idx"])
+                    round_matches.append({
+                        "a": match_result["a"],
+                        "b": match_result["b"],
+                        "winner_idx": match_result["winner_idx"],
+                    })
+
+            # Handle bye (odd number of contestants)
+            if len(current_round) % 2 == 1:
+                bye_idx = current_round[-1]
+                next_round.append(bye_idx)
+                round_matches.append({"bye": bye_idx})
+                logger.debug(f"[{self.bi}] Round {round_num}: Solution {bye_idx} gets a bye.")
+
+            bracket["rounds"].append(round_matches)
+            logger.debug(f"[{self.bi}] Round {round_num} complete: {len(current_round)} -> {len(next_round)} solutions remaining.")
+            current_round = next_round
+            round_num += 1
+
+        winner_idx = current_round[0]
+        return winner_idx, solutions[winner_idx], bracket
 
     @override
     def solve(self, stmt: str) -> SolverResponse:
         """
         Main solve method:
         1. Generate N candidate solutions in parallel
-        2. Score each with the critic prompt in parallel
-        3. Select the best one (random tie-breaking)
-        4. Return it as the final response
+        2. Run single-elimination tournament using pairwise comparison
+        3. Return the winning solution
         """
         self._start_run(stmt)
         self._load_checkpoint_if_exists()
@@ -245,62 +279,38 @@ class BestOfNAgent(BaseAgent):
             self._save_checkpoint()
             logger.debug(f"[{self.bi}] Generated {len(solutions)} solutions. Cost: ${total_gen_cost['cost']:.4f}")
 
-        # Step 2: Judge solutions
-        if self._history_has_step("judging_summary"):
-            logger.debug(f"[{self.bi}] Loading scores from checkpoint.")
-            judge_summary = self.get_history_step("judging_summary")
-            scores = judge_summary["scores"]
-            reasonings = judge_summary["reasonings"]
+        # Step 2: Run tournament
+        if self._history_has_step("tournament_summary"):
+            logger.debug(f"[{self.bi}] Loading tournament results from checkpoint.")
+            tournament_summary = self.get_history_step("tournament_summary")
+            best_idx = tournament_summary["winning_solution_idx"]
+            best_solution = tournament_summary["winning_solution"]
         else:
-            logger.debug(f"[{self.bi}] Judging {len(solutions)} solutions.")
-            scores, reasonings, judge_convos, judge_costs = self._judge_all_solutions(solutions)
+            logger.debug(f"[{self.bi}] Running solution tournament.")
+            best_idx, best_solution, bracket = self._run_tournament(solutions)
 
-            # Record each judging with its cost
-            for i, (score, reasoning, convo, cost) in enumerate(zip(scores, reasonings, judge_convos, judge_costs)):
-                self._add_history(
-                    step=f"judging_{i}",
-                    timestep=2,
-                    conversation=convo,
-                    solution_index=i,
-                    score=score,
-                    reasoning=reasoning,
-                    cost=cost,
-                )
+            # Calculate total tournament cost from match history entries
+            tournament_cost = {"cost": 0, "input_tokens": 0, "output_tokens": 0, "time": 0}
+            for entry in self.history:
+                if entry["step"].startswith("round_"):
+                    cost = entry.get("cost", {})
+                    tournament_cost["cost"] += cost.get("cost", 0)
+                    tournament_cost["input_tokens"] += cost.get("input_tokens", 0)
+                    tournament_cost["output_tokens"] += cost.get("output_tokens", 0)
+                    tournament_cost["time"] += cost.get("time", 0)
 
-            # Calculate total judging cost
-            total_judge_cost = {
-                "cost": sum(c["cost"] for c in judge_costs),
-                "input_tokens": sum(c["input_tokens"] for c in judge_costs),
-                "output_tokens": sum(c["output_tokens"] for c in judge_costs),
-                "time": sum(c["time"] for c in judge_costs),
-            }
-
-            # Summary step with total cost
+            # Summary step
             self._add_history(
-                step="judging_summary",
+                step="tournament_summary",
                 timestep=2,
                 conversation=[],
-                scores=scores,
-                reasonings=reasonings,
-                total_cost=total_judge_cost,
+                bracket=bracket,
+                winning_solution_idx=best_idx,
+                winning_solution=best_solution,
+                total_cost=tournament_cost,
             )
             self._save_checkpoint()
-            logger.debug(f"[{self.bi}] Judging complete. Scores: {scores}. Cost: ${total_judge_cost['cost']:.4f}")
-
-        # Step 3: Select best
-        best_idx = self._select_best_index(scores)
-        best_solution = solutions[best_idx]
-
-        self._add_history(
-            step="selection",
-            timestep=3,
-            conversation=[],
-            best_index=best_idx,
-            best_score=scores[best_idx],
-            all_scores=scores,
-        )
-
-        logger.info(f"[{self.bi}] Selected solution {best_idx} with score {scores[best_idx]}/10")
+            logger.info(f"[{self.bi}] Tournament complete. Winner: Solution {best_idx}. Cost: ${tournament_cost['cost']:.4f}")
 
         # Build final conversation (user question + best solution)
         final_convo = [

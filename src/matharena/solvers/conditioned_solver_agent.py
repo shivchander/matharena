@@ -94,8 +94,14 @@ class ConditionedSolverAgent(BaseAgent):
                 f"Run PlanTournamentAgent first with model {self.plan_source_model}"
             )
 
-        with open(plan_output_path, "r") as f:
-            plan_output = json.load(f)
+        try:
+            with open(plan_output_path, "r") as f:
+                plan_output = json.load(f)
+        except json.JSONDecodeError as e:
+            raise ValueError(
+                f"Corrupted JSON at {plan_output_path}: {e}. "
+                f"The upstream plan output may be incomplete."
+            )
 
         # Find the winning plan in history
         # History is a list of runs, each run is a list of steps

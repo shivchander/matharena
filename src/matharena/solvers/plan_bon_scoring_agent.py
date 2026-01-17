@@ -1,8 +1,6 @@
-"""Plan Scoring Agent: Scores plans from upstream PlanGenerationAgent."""
+"""Plan Best-of-N Scoring Agent: Generates K plans and scores each to select the best."""
 
 import copy
-import json
-import os
 import random
 import re
 import time
@@ -17,13 +15,12 @@ from matharena.api_client import APIClient
 from matharena.solvers import BaseAgent, SolverResponse
 
 
-class PlanScoringAgent(BaseAgent):
+class PlanBonScoringAgent(BaseAgent):
     """
-    Agent that reads plans from an upstream PlanGenerationAgent's output,
-    scores each individually using an LLM judge (Score: X/10 format),
-    and identifies the best plan.
+    Agent that generates K plans (textual latents) for a math problem,
+    scores each individually using an LLM judge, and returns the highest-scoring one.
 
-    Reads plans from messages[0..K-1] where K = number of runs from PlanGenerationAgent.
+    More token-efficient than tournament selection (K scores vs K-1 pairwise comparisons).
     """
 
     def __init__(self, batch_idx, problem_idx, run_idx, solver_config,
@@ -37,44 +34,30 @@ class PlanScoringAgent(BaseAgent):
         # Create a unique run ID for checkpointing
         stringify_params = str(self.model_config) + str(self.scaffold_config)
         parameter_hash = md5(stringify_params.encode('utf-8')).hexdigest()[:8]
-        self.RUN_ID = f"plan_score_{self.model_config['model'].replace('/', '--')}_{self.problem_idx}_{parameter_hash}"
+        self.RUN_ID = f"plan_bon_scoring_{self.model_config['model'].replace('/', '--')}_{self.problem_idx}_{parameter_hash}"
 
         # Configuration
+        self.n_plans = solver_config.get("n_plans", self.scaffold_config.get("n_plans", 8))
+        self.plan_pool_size = self.scaffold_config.get("plan_pool_size", 4)
         self.scoring_pool_size = self.scaffold_config.get("scoring_pool_size", 4)
 
-        # Temperature support
-        self.temperature = solver_config.get(
-            "temperature",
-            self.scaffold_config.get("temperature", None)
-        )
+        # Load prompts from scaffold config
+        prompts = self.scaffold_config.get("prompts", {})
 
-        # Plan source model (where to read plans from)
-        self.plan_source_model = solver_config.get(
-            "plan_source_model",
-            self.scaffold_config.get("plan_source_model", None)
-        )
-        if self.plan_source_model is None:
-            raise ValueError("plan_source_model must be specified in solver config or scaffold config")
+        planner_prompt = prompts.get("planner", None)
+        if planner_prompt is None:
+            raise ValueError("Planner prompt not found in scaffold config under 'prompts.planner'")
+        self.planner_template = Template(planner_prompt)
 
-        # Competition name (for building output path)
-        self.competition = solver_config.get("competition", None)
-        if self.competition is None:
-            raise ValueError("competition must be specified in solver config")
-
-        # Load plan critic prompt from scaffold config
-        plan_critic_prompt = self.scaffold_config.get("prompts", {}).get("plan_critic", None)
+        plan_critic_prompt = prompts.get("plan_critic", None)
         if plan_critic_prompt is None:
             raise ValueError("Plan critic prompt not found in scaffold config under 'prompts.plan_critic'")
         self.plan_critic_template = Template(plan_critic_prompt)
 
-        # Create API client with temperature if specified
+        # Create API client
         simple_client_args = copy.deepcopy(default_api_client_args)
         for key in ["human_readable_id", "date", "other_params"]:
             simple_client_args.pop(key, None)
-
-        if self.temperature is not None:
-            simple_client_args["temperature"] = self.temperature
-
         self.client = APIClient(**simple_client_args)
 
     def _query_with_cost(self, client: APIClient, query: list[dict[str, Any]]) -> tuple[list[dict], dict]:
@@ -103,71 +86,37 @@ class PlanScoringAgent(BaseAgent):
 
         return conversation, call_cost
 
-    def _load_plans(self) -> list[str]:
-        """
-        Load plans from upstream PlanGenerationAgent output.
-        Reads from messages[0..K-1] where each message is a conversation.
-        """
-        plan_output_path = os.path.join(
-            "outputs",
-            self.competition,
-            self.plan_source_model,
-            f"{self.problem_idx}.json"
-        )
+    def _generate_one_plan(self) -> tuple[str, list[dict], dict]:
+        """Generate a single plan. Returns (plan, conversation, cost_dict)."""
+        prompt = self.planner_template.render(problem=self.stmt)
+        convo = [{"role": "user", "content": prompt}]
+        convo, call_cost = self._query_with_cost(self.client, convo)
+        plan = convo[-1]["content"]
+        return plan, convo, call_cost
 
-        if not os.path.exists(plan_output_path):
-            raise FileNotFoundError(
-                f"Plan source not found at {plan_output_path}. "
-                f"Run {self.plan_source_model} first for problem {self.problem_idx}"
-            )
-
-        try:
-            with open(plan_output_path, "r") as f:
-                data = json.load(f)
-        except json.JSONDecodeError as e:
-            raise ValueError(
-                f"Corrupted JSON at {plan_output_path}: {e}. "
-                f"The upstream plan generation output may be incomplete."
-            )
-
-        # Read from messages array (each run produces one conversation)
-        messages = data.get("messages", [])
+    def _generate_plans(self) -> tuple[list[str], list[list[dict]], list[dict]]:
+        """Generate K plans in parallel. Returns (plans, convos, costs)."""
         plans = []
-        for convo in messages:
-            if convo and len(convo) >= 1:
-                # Find the assistant's response
-                for msg in reversed(convo):
-                    if msg.get("role") == "assistant":
-                        content = msg.get("content", "")
-                        if content:
-                            plans.append(content)
-                        break
+        convos = []
+        costs = []
 
-        if not plans:
-            raise ValueError(f"No plans found in {plan_output_path}. Check that PlanGenerationAgent ran successfully.")
+        with ThreadPoolExecutor(max_workers=self.plan_pool_size) as executor:
+            futures = [executor.submit(self._generate_one_plan) for _ in range(self.n_plans)]
+            for future in as_completed(futures):
+                plan, convo, call_cost = future.result()
+                plans.append(plan)
+                convos.append(convo)
+                costs.append(call_cost)
 
-        return plans
+        return plans, convos, costs
 
     def _parse_score(self, response: str) -> tuple[int, str]:
         """
         Parse score response.
-        Expected format: JSON with "reasoning" and "score" fields.
-        Fallback: "Score: X/10" pattern for backward compatibility.
-        Returns: (score, justification/reasoning)
+        Expected format: "Score: X/10" at the end.
+        Returns: (score, justification)
         """
-        # Try JSON parsing first
-        # Look for JSON object in the response
-        json_match = re.search(r'\{[^{}]*"score"\s*:\s*\d+[^{}]*\}', response, re.DOTALL)
-        if json_match:
-            try:
-                data = json.loads(json_match.group(0))
-                score = int(data.get("score", 0))
-                reasoning = data.get("reasoning", "")
-                return (max(0, min(10, score)), reasoning)
-            except (json.JSONDecodeError, ValueError):
-                pass
-
-        # Fallback: Look for "Score: X/10" pattern
+        # Look for "Score: X/10" pattern
         match = re.search(r'Score:\s*(\d+)\s*/\s*10', response, re.IGNORECASE)
         if match:
             score = int(match.group(1))
@@ -230,47 +179,63 @@ class PlanScoringAgent(BaseAgent):
     def solve(self, stmt: str) -> SolverResponse:
         """
         Main solve method:
-        1. Load plans from upstream PlanGenerationAgent (from messages array)
+        1. Generate K plans in parallel
         2. Score each plan individually
-        3. Identify the best plan
+        3. Return the highest-scoring plan
         """
         self._start_run(stmt)
         self._load_checkpoint_if_exists()
 
-        # Step 1: Load plans
-        if self._history_has_step("plans_loaded"):
+        # Step 1: Generate plans
+        if self._history_has_step("plan_generation_summary"):
             logger.debug(f"[{self.bi}] Loading plans from checkpoint.")
-            plans_loaded = self.get_history_step("plans_loaded")
-            plans = plans_loaded["plans"]
+            gen_summary = self.get_history_step("plan_generation_summary")
+            plans = gen_summary["plans"]
         else:
-            logger.debug(f"[{self.bi}] Loading plans from {self.plan_source_model}.")
-            plans = self._load_plans()
+            logger.debug(f"[{self.bi}] Generating {self.n_plans} plans.")
+            plans, gen_convos, gen_costs = self._generate_plans()
+
+            for i, (convo, cost) in enumerate(zip(gen_convos, gen_costs)):
+                self._add_history(
+                    step=f"plan_{i}",
+                    timestep=1,
+                    conversation=convo,
+                    plan_index=i,
+                    plan=plans[i],
+                    cost=cost,
+                )
+
+            total_gen_cost = {
+                "cost": sum(c["cost"] for c in gen_costs),
+                "input_tokens": sum(c["input_tokens"] for c in gen_costs),
+                "output_tokens": sum(c["output_tokens"] for c in gen_costs),
+                "time": sum(c["time"] for c in gen_costs),
+            }
 
             self._add_history(
-                step="plans_loaded",
+                step="plan_generation_summary",
                 timestep=1,
                 conversation=[],
-                plan_source_model=self.plan_source_model,
-                n_plans=len(plans),
+                k_plans=len(plans),
                 plans=plans,
+                total_cost=total_gen_cost,
             )
             self._save_checkpoint()
-            logger.debug(f"[{self.bi}] Loaded {len(plans)} plans from upstream.")
+            logger.debug(f"[{self.bi}] Generated {len(plans)} plans. Cost: ${total_gen_cost['cost']:.4f}")
 
         # Step 2: Score plans
         if self._history_has_step("scoring_summary"):
             logger.debug(f"[{self.bi}] Loading scores from checkpoint.")
             score_summary = self.get_history_step("scoring_summary")
             scores = score_summary["scores"]
-            best_idx = score_summary["best_plan_idx"]
-            best_plan = score_summary["best_plan"]
+            justifications = score_summary["justifications"]
         else:
             logger.debug(f"[{self.bi}] Scoring {len(plans)} plans.")
             scores, justifications, score_convos, score_costs = self._score_all_plans(plans)
 
             for i, (score, justification, convo, cost) in enumerate(zip(scores, justifications, score_convos, score_costs)):
                 self._add_history(
-                    step=f"scoring_{i}",
+                    step=f"plan_scoring_{i}",
                     timestep=2,
                     conversation=convo,
                     plan_index=i,
@@ -286,37 +251,37 @@ class PlanScoringAgent(BaseAgent):
                 "time": sum(c["time"] for c in score_costs),
             }
 
-            # Step 3: Select best
-            best_idx = self._select_best(scores)
-            best_plan = plans[best_idx]
-
             self._add_history(
                 step="scoring_summary",
                 timestep=2,
                 conversation=[],
                 scores=scores,
                 justifications=justifications,
-                plans=plans,  # Store plans for downstream agents
-                best_plan_idx=best_idx,
-                best_plan=best_plan,
-                best_score=scores[best_idx],
                 total_cost=total_score_cost,
             )
             self._save_checkpoint()
             logger.debug(f"[{self.bi}] Scoring complete. Scores: {scores}. Cost: ${total_score_cost['cost']:.4f}")
 
-        # Get best plan from summary
-        score_summary = self.get_history_step("scoring_summary")
-        best_idx = score_summary["best_plan_idx"]
-        best_plan = score_summary["best_plan"]
-        best_score = score_summary["best_score"]
+        # Step 3: Select best
+        best_idx = self._select_best(scores)
+        winning_plan = plans[best_idx]
 
-        logger.info(f"[{self.bi}] Best plan is #{best_idx} with score {best_score}/10")
+        self._add_history(
+            step="selection",
+            timestep=3,
+            conversation=[],
+            winning_plan_idx=best_idx,
+            winning_plan=winning_plan,
+            winning_score=scores[best_idx],
+            all_scores=scores,
+        )
 
-        # Build final conversation (problem + best plan)
+        logger.info(f"[{self.bi}] Selected plan {best_idx} with score {scores[best_idx]}/10")
+
+        # Build final conversation (problem + winning plan)
         final_convo = [
             {"role": "user", "content": self.default_prompt_template.format(problem=stmt)},
-            {"role": "assistant", "content": best_plan}
+            {"role": "assistant", "content": winning_plan}
         ]
 
         return self._end_run(final_convo)

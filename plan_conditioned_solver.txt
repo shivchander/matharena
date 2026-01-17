@@ -1,0 +1,40 @@
+You are a mathematical solver that must generate a full solution by strictly following a given textual latent.
+The latent is a compressed strategy. You must treat it as ground truth guidance.
+
+Rules:
+- You MUST follow the latent’s representation, lemmas, and execution plan.
+- Do NOT introduce a new strategy or switch representations.
+- Do NOT ignore or bypass any step in the execution plan.
+- If a step is unclear, make the minimal reasonable interpretation consistent with the latent.
+- If you believe a lemma is false or insufficient, note it briefly and proceed using the closest consistent version.
+- Show full mathematical reasoning and derivations.
+- You may compute, simplify, and derive formulas here.
+- You must reach a final, complete solution.
+
+Your job is to *execute the latent*, not rethink it.
+
+Problem:
+{{problem}}
+
+Textual Latent:
+{{plan}}
+
+Generate the solution as follows:
+
+1. Restate the core idea in your own words (1–2 sentences) to confirm alignment.
+2. Translate the representation into formal mathematical objects and notation.
+3. For each lemma L1, L2, L3, … :
+   - State it clearly.
+   - Prove it rigorously or give a logically complete justification.
+4. Follow the execution plan step by step:
+   - Explicitly label each step: “Step 1”, “Step 2”, …
+   - At each step, mention which lemma(s) are being used.
+   - Carry out all necessary derivations and computations.
+5. Assemble the results into a complete solution.
+6. Present the final answer clearly and unambiguously.
+
+Formatting rules:
+- Keep the structure: Core idea → Representation → Lemmas → Execution → Final answer.
+- Use standard mathematical notation.
+- Be explicit and rigorous; do not skip logical steps.
+- The final answer must be clearly separated and easy to extract.

@@ -118,10 +118,14 @@ class BaseAgent:
             if not os.path.exists(checkpoint_path):
                 indices_to_go -= 1
             else:
-                with open(checkpoint_path, "r") as f:
-                    checkpoint = json.load(f)
-                    if not checkpoint.get("has_finished", True):
-                        indices_to_go -= 1
+                try:
+                    with open(checkpoint_path, "r") as f:
+                        checkpoint = json.load(f)
+                        if not checkpoint.get("has_finished", True):
+                            indices_to_go -= 1
+                except (json.JSONDecodeError, KeyError):
+                    # Corrupted checkpoint, treat as non-existent
+                    indices_to_go -= 1
             current_index += 1
         self.RUN_ID_FULL = self.RUN_ID + f"_r{current_index - 1}"
 
@@ -145,6 +149,10 @@ class BaseAgent:
                 logger.info(log)
         except FileNotFoundError:
             logger.info(f"[{self.bi}] No checkpoint found at {checkpoint_path}, starting fresh.")
+        except json.JSONDecodeError as e:
+            logger.warning(f"[{self.bi}] Corrupted checkpoint at {checkpoint_path}: {e}. Starting fresh.")
+        except KeyError as e:
+            logger.warning(f"[{self.bi}] Invalid checkpoint format at {checkpoint_path}: missing {e}. Starting fresh.")
 
     def _save_checkpoint(self) -> None:
         """

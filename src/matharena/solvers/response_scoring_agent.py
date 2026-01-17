@@ -123,8 +123,14 @@ class ResponseScoringAgent(BaseAgent):
                 f"Run {self.response_source_model} first for problem {self.problem_idx}"
             )
 
-        with open(response_output_path, "r") as f:
-            data = json.load(f)
+        try:
+            with open(response_output_path, "r") as f:
+                data = json.load(f)
+        except json.JSONDecodeError as e:
+            raise ValueError(
+                f"Corrupted JSON at {response_output_path}: {e}. "
+                f"The upstream response output may be incomplete."
+            )
 
         # Try 1: Agent format - look for "generation_summary" in history
         history = data.get("history", [])

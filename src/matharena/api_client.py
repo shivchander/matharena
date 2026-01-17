@@ -263,6 +263,10 @@ class APIClient:
         elif self.api == "openrouter":
             self.api_key = os.getenv("OPENROUTER_API_KEY")
             self.base_url = "https://openrouter.ai/api/v1"
+            # OpenRouter uses 'reasoning' parameter - must be passed via extra_body
+            if "reasoning" in self.kwargs:
+                self.kwargs["extra_body"] = {"reasoning": self.kwargs["reasoning"]}
+                del self.kwargs["reasoning"]
             if "via_openai" in self.kwargs:
                 del self.kwargs["via_openai"]
                 self.api = "openai"
@@ -475,7 +479,12 @@ class APIClient:
         """
         new_messages = []
         for m in messages:
+            # Drop assistant CoT messages (type == "cot")
             if m.get("role", "") == "assistant" and m.get("type", "response") == "cot":
+                continue
+            # Drop OpenAI Responses API reasoning blocks (type == "reasoning", no role)
+            # These have structure: {id, summary, type: "reasoning", content, encrypted_content}
+            if m.get("type", "") == "reasoning" and "role" not in m:
                 continue
             new_messages.append(m)
 
@@ -915,6 +924,8 @@ class APIClient:
         output_tokens = 0
         reasoning_tokens = 0
         total_retries = 0
+        no_usage_retries = 0
+        max_no_usage_retries = 3  # Skip after this many responses without usage info
 
         for _ in range(total_max_tool_calls + 1):
             # Inner retry to get a response
@@ -952,6 +963,17 @@ class APIClient:
                     continue
             if response is None:
                 raise ValueError("Max inner retries reached.")
+
+            # Check if usage is available (can be None for incomplete/error responses)
+            if response.usage is None:
+                no_usage_retries += 1
+                if no_usage_retries >= max_no_usage_retries:
+                    logger.error(f"[{idx}] OpenAI response has no usage info after {max_no_usage_retries} attempts, skipping...")
+                    conversation.append({"role": "assistant", "content": "[SKIPPED: No response from API]"})
+                    return self.InternalRequestResult(conversation, input_tokens, output_tokens, n_retries=total_retries, reasoning_tokens=reasoning_tokens)
+                logger.warning(f"[{idx}] OpenAI response has no usage info, retrying ({no_usage_retries}/{max_no_usage_retries})...")
+                time.sleep(5)
+                continue
 
             # Update state: token counts and conversation (potentially execute tool calls)
             input_tokens += response.usage.input_tokens

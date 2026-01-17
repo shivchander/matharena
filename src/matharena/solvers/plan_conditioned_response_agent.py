@@ -7,6 +7,7 @@ import time
 from hashlib import md5
 from typing import Any, override
 
+import numpy as np
 from jinja2 import Template
 from loguru import logger
 
@@ -44,6 +45,14 @@ class PlanConditionedResponseAgent(BaseAgent):
             self.scaffold_config.get("temperature", None)
         )
 
+        # Plan selection method: "argmax" (use upstream best) or "softmax" (sample from scores)
+        self.selection_method = self.scaffold_config.get("selection_method", "argmax")
+        # Temperature for softmax sampling (higher = more uniform, lower = more greedy)
+        self.selection_temperature = self.scaffold_config.get("selection_temperature", 1.0)
+        # Number of plans to randomly sample before applying softmax (None = use all plans)
+        # This simulates having generated only K plans instead of all available plans
+        self.selection_sample_k = self.scaffold_config.get("selection_sample_k", None)
+
         # Plan score source model (where to read scored plans from)
         self.plan_score_source_model = solver_config.get(
             "plan_score_source_model",
@@ -73,10 +82,15 @@ class PlanConditionedResponseAgent(BaseAgent):
 
         self.client = APIClient(**simple_client_args)
 
-    def _load_best_plan(self) -> tuple[str, int, int]:
+    def _load_and_select_plan(self) -> tuple[str, int, int, list[float], list[int] | None]:
         """
-        Load the best plan from upstream PlanScoringAgent output.
-        Returns (best_plan, best_plan_idx, best_score)
+        Load plans and scores from upstream PlanScoringAgent, then select a plan.
+
+        Selection method controlled by self.selection_method:
+        - "argmax": Use the upstream best plan (deterministic)
+        - "softmax": Sample from softmax distribution over scores
+
+        Returns (selected_plan, selected_idx, selected_score, selection_probs, sampled_indices)
         """
         score_output_path = os.path.join(
             "outputs",
@@ -91,23 +105,86 @@ class PlanConditionedResponseAgent(BaseAgent):
                 f"Run {self.plan_score_source_model} first for problem {self.problem_idx}"
             )
 
-        with open(score_output_path, "r") as f:
-            data = json.load(f)
+        try:
+            with open(score_output_path, "r") as f:
+                data = json.load(f)
+        except json.JSONDecodeError as e:
+            raise ValueError(
+                f"Corrupted JSON at {score_output_path}: {e}. "
+                f"The upstream plan scoring output may be incomplete."
+            )
 
         # Find scoring_summary in history (first run)
         history = data.get("history", [[]])
         if not history or not history[0]:
             raise ValueError(f"No history found in {score_output_path}")
 
+        scoring_summary = None
         for step in history[0]:
             if step.get("step") == "scoring_summary":
-                best_plan = step.get("best_plan")
-                best_plan_idx = step.get("best_plan_idx")
-                best_score = step.get("best_score")
-                if best_plan is not None:
-                    return best_plan, best_plan_idx, best_score
+                scoring_summary = step
+                break
 
-        raise ValueError(f"No scoring_summary found in {score_output_path}")
+        if scoring_summary is None:
+            raise ValueError(f"No scoring_summary found in {score_output_path}")
+
+        plans = scoring_summary.get("plans", [])
+        scores = scoring_summary.get("scores", [])
+
+        if not plans or not scores:
+            raise ValueError(f"No plans or scores found in scoring_summary at {score_output_path}")
+
+        # Randomly sample K plans if selection_sample_k is set (simulates generating fewer plans)
+        sampled_indices = None
+        if self.selection_sample_k is not None and self.selection_sample_k < len(plans):
+            sampled_indices = np.random.choice(len(plans), size=self.selection_sample_k, replace=False).tolist()
+            sampled_plans = [plans[i] for i in sampled_indices]
+            sampled_scores = [scores[i] for i in sampled_indices]
+        else:
+            sampled_plans = plans
+            sampled_scores = scores
+
+        if self.selection_method == "argmax":
+            # Argmax over sampled plans
+            max_score = max(sampled_scores)
+            best_indices_in_sample = [i for i, s in enumerate(sampled_scores) if s == max_score]
+            selected_idx_in_sample = np.random.choice(best_indices_in_sample)
+
+            # Map back to original index
+            if sampled_indices is not None:
+                selected_idx = sampled_indices[selected_idx_in_sample]
+            else:
+                selected_idx = selected_idx_in_sample
+
+            selected_plan = plans[selected_idx]
+            selected_score = scores[selected_idx]
+            # Probabilities over sampled plans
+            probs = [1.0 / len(best_indices_in_sample) if s == max_score else 0.0 for s in sampled_scores]
+
+        elif self.selection_method == "softmax":
+            # Softmax sampling over sampled plans
+            scores_array = np.array(sampled_scores, dtype=float)
+            logits = scores_array / self.selection_temperature
+            # Numerical stability: subtract max before exp
+            logits = logits - np.max(logits)
+            probs = np.exp(logits) / np.sum(np.exp(logits))
+
+            selected_idx_in_sample = int(np.random.choice(len(sampled_scores), p=probs))
+
+            # Map back to original index
+            if sampled_indices is not None:
+                selected_idx = sampled_indices[selected_idx_in_sample]
+            else:
+                selected_idx = selected_idx_in_sample
+
+            selected_plan = plans[selected_idx]
+            selected_score = scores[selected_idx]
+            probs = probs.tolist()
+
+        else:
+            raise ValueError(f"Unknown selection_method: {self.selection_method}")
+
+        return selected_plan, selected_idx, selected_score, probs, sampled_indices
 
     def _generate_solution(self, plan: str) -> tuple[str, list[dict], dict]:
         """Generate a single solution conditioned on the plan. Returns (solution, conversation, cost_dict)."""
@@ -151,27 +228,33 @@ class PlanConditionedResponseAgent(BaseAgent):
         self._start_run(stmt)
         self._load_checkpoint_if_exists()
 
-        # Step 1: Load best plan from upstream
-        if self._history_has_step("plan_loaded"):
-            logger.debug(f"[{self.bi}] Loading plan from checkpoint.")
-            plan_loaded = self.get_history_step("plan_loaded")
-            best_plan = plan_loaded["best_plan"]
-            best_plan_idx = plan_loaded["best_plan_idx"]
+        # Step 1: Load plans and select one (argmax or softmax)
+        if self._history_has_step("plan_selected"):
+            logger.debug(f"[{self.bi}] Loading plan selection from checkpoint.")
+            plan_selected = self.get_history_step("plan_selected")
+            best_plan = plan_selected["selected_plan"]
+            best_plan_idx = plan_selected["selected_plan_idx"]
         else:
-            logger.debug(f"[{self.bi}] Loading best plan from {self.plan_score_source_model}.")
-            best_plan, best_plan_idx, best_score = self._load_best_plan()
+            sample_k_info = f", sample_k={self.selection_sample_k}" if self.selection_sample_k else ""
+            logger.debug(f"[{self.bi}] Loading plans from {self.plan_score_source_model} (selection_method={self.selection_method}{sample_k_info}).")
+            best_plan, best_plan_idx, best_score, selection_probs, sampled_indices = self._load_and_select_plan()
 
             self._add_history(
-                step="plan_loaded",
+                step="plan_selected",
                 timestep=1,
                 conversation=[],
                 plan_score_source_model=self.plan_score_source_model,
-                best_plan=best_plan,
-                best_plan_idx=best_plan_idx,
-                best_score=best_score,
+                selection_method=self.selection_method,
+                selection_temperature=self.selection_temperature if self.selection_method == "softmax" else None,
+                selection_sample_k=self.selection_sample_k,
+                sampled_plan_indices=sampled_indices,
+                selection_probabilities=selection_probs,
+                selected_plan=best_plan,
+                selected_plan_idx=best_plan_idx,
+                selected_score=best_score,
             )
             self._save_checkpoint()
-            logger.debug(f"[{self.bi}] Loaded best plan #{best_plan_idx} with score {best_score}/10.")
+            logger.debug(f"[{self.bi}] Selected plan #{best_plan_idx} with score {best_score}/10 (method={self.selection_method}).")
 
         # Step 2: Generate solution conditioned on best plan
         if self._history_has_step("solution_generated"):

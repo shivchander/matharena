@@ -84,9 +84,13 @@ class AgentPool(BaseSolver):
             iterator = as_completed(futures)
             iterator = tqdm(iterator, total=len(futures))
             for future in iterator:
-                solver_response = future.result()
-                logger.info(f"[{solver_response.idx}] Agent completed solving problem.")
-                yield solver_response
+                try:
+                    solver_response = future.result()
+                    logger.info(f"[{solver_response.idx}] Agent completed solving problem.")
+                    yield solver_response
+                except Exception as e:
+                    logger.opt(exception=True).error(f"Agent failed with exception: {e}. Continuing with other runs.")
+                    continue
 
     @override
     def last_chance(self, previous_response: SolverResponse) -> SolverResponse:
