@@ -32,6 +32,50 @@ uv run python scripts/run.py --comp path/to/comp --models model1 model2 --n 4 --
 uv run python scripts/regrade.py --comps euler/euler
 ```
 
+### Claude Sonnet 4.5 via OpenRouter
+
+Two configs available:
+- `anthropic/claude-sonnet-45-or` - Standard inference (16 concurrent)
+- `anthropic/claude-sonnet-45-or-thinking` - Extended thinking with 32K reasoning budget (8 concurrent)
+
+```bash
+# Load environment variables first
+cd /home/lab/shiv/matharena && set -a && source .env && set +a
+
+# Standard inference
+uv run python scripts/run.py --comp apex/shortlist_2025 \
+    --models anthropic/claude-sonnet-45-or --n 64
+
+# With extended thinking
+uv run python scripts/run.py --comp apex/shortlist_2025 \
+    --models anthropic/claude-sonnet-45-or-thinking --n 64
+```
+
+### Plan-Conditioned Pipeline
+
+Multi-stage pipeline: Plan Generation → Plan Scoring → Conditioned Response
+
+Pipeline configs for Claude Sonnet 4.5 OR:
+- `anthropic/claude-sonnet-45-or--plan-gen` - Generate K plans
+- `anthropic/claude-sonnet-45-or--plan-scoring` - Score and select best plan
+- `anthropic/claude-sonnet-45-or--cond-resp` - Generate M solutions from best plan
+
+```bash
+cd /home/lab/shiv/matharena && set -a && source .env && set +a
+
+# Step 1: Generate 16 plans per problem
+uv run python scripts/run.py --comp apex/shortlist_2025 \
+    --models anthropic/claude-sonnet-45-or--plan-gen --n 16
+
+# Step 2: Score all plans (reads from step 1)
+uv run python scripts/run.py --comp apex/shortlist_2025 \
+    --models anthropic/claude-sonnet-45-or--plan-scoring --n 1
+
+# Step 3: Generate 64 solutions from best plan
+uv run python scripts/run.py --comp apex/shortlist_2025 \
+    --models anthropic/claude-sonnet-45-or--cond-resp --n 64
+```
+
 ### Testing
 ```bash
 uv run pytest tests/test_code_execution.py
@@ -67,6 +111,41 @@ uv run python scripts/extraction/leaderboard.py --comps path/to/comp1 path/to/co
 uv run python scripts/extraction/comparison.py --old-comps aime/aime_2024 --new-comps aime/aime_2025
 ```
 
+### Budget Accuracy Analysis
+
+Analyze pass@k (k=1,2,4,8,16,32,64) with token costs and variance:
+
+```bash
+# Analyze with 3 seeds for variance estimation
+uv run python scripts/analyze_budget_accuracy.py \
+    --model anthropic/claude-sonnet-45-or \
+    --comp apex/shortlist_2025 \
+    --n-seeds 3
+
+# Save results to JSON
+uv run python scripts/analyze_budget_accuracy.py \
+    --model anthropic/claude-sonnet-45-or-thinking \
+    --comp apex/shortlist_2025 \
+    --n-seeds 3 \
+    --output-json results.json
+```
+
+Output: accuracy ± std, output tokens, reasoning tokens, cost per budget level.
+
+### Pipeline Analysis
+
+Analyze multi-stage pipeline costs and accuracy:
+
+```bash
+uv run python scripts/analyze_planning_pipeline.py \
+    --comp apex/shortlist_2025 \
+    --plan-gen anthropic/claude-sonnet-45-or--plan-gen \
+    --plan-score anthropic/claude-sonnet-45-or--plan-scoring \
+    --cond-resp anthropic/claude-sonnet-45-or--cond-resp
+```
+
+Output: per-stage costs (output tokens, reasoning tokens), pass@k accuracy.
+
 ### Docker (for code execution sandbox)
 ```bash
 docker build -t matharena-docker docker/
@@ -101,6 +180,30 @@ max_tokens: 16000
 read_cost: 2.5  # per million tokens
 write_cost: 10
 ```
+
+### Adding OpenRouter Models
+
+```yaml
+# Standard inference
+model: anthropic/claude-sonnet-4.5
+api: openrouter
+max_tokens: 64000
+concurrent_requests: 16
+read_cost: 3      # $/million input tokens
+write_cost: 15    # $/million output tokens
+human_readable_id: Claude-Sonnet-4.5-OR
+
+# With extended thinking
+model: anthropic/claude-sonnet-4.5
+api: openrouter
+max_tokens: 64000
+concurrent_requests: 8
+reasoning:
+  max_tokens: 32000  # Reasoning token budget
+human_readable_id: Claude-Sonnet-4.5-OR-Thinking
+```
+
+Requires `OPENROUTER_API_KEY` in `.env`.
 
 ### Adding New Competitions
 1. Create YAML in `configs/competitions/{name}.yaml`:
