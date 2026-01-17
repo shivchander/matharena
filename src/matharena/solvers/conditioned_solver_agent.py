@@ -67,6 +67,18 @@ class ConditionedSolverAgent(BaseAgent):
             raise ValueError("Solution critic prompt not found in scaffold config under 'prompts.solution_critic'")
         self.solution_critic_template = Template(solution_critic_prompt)
 
+        # Completion mode configuration and templates
+        self.use_completion_mode = self.scaffold_config.get("use_completion_mode", False)
+        if self.use_completion_mode:
+            problem_only_prompt = prompts.get("problem_only", None)
+            assistant_plan_prefix_prompt = prompts.get("assistant_plan_prefix", None)
+            if not problem_only_prompt or not assistant_plan_prefix_prompt:
+                raise ValueError(
+                    "Completion mode enabled but missing 'problem_only' or 'assistant_plan_prefix' prompts"
+                )
+            self.problem_only_template = Template(problem_only_prompt)
+            self.assistant_plan_prefix_template = Template(assistant_plan_prefix_prompt)
+
         # Create API client
         simple_client_args = copy.deepcopy(default_api_client_args)
         for key in ["human_readable_id", "date", "other_params"]:
@@ -103,22 +115,38 @@ class ConditionedSolverAgent(BaseAgent):
                 f"The upstream plan output may be incomplete."
             )
 
-        # Find the winning plan in history
+        # Find the plan in history
         # History is a list of runs, each run is a list of steps
-        # We want the first run's tournament_summary
+        # Different agents use different step names:
+        # - PlanTournamentAgent: tournament_summary with winning_plan
+        # - SequentialPlanRefinementAgent: refinement_summary with final_plan
+        # - BranchingPlanExplorationAgent: synthesis with final_plan
         history = plan_output.get("history", [[]])
         if not history or not history[0]:
             raise ValueError(f"No history found in {plan_output_path}")
 
         run_history = history[0]  # First run
+
+        # Try tournament-style output first (winning_plan)
         for step in run_history:
             if step.get("step") == "tournament_summary":
                 winning_plan = step.get("winning_plan")
                 if winning_plan:
-                    logger.info(f"[{self.bi}] Loaded winning plan from {plan_output_path}")
+                    logger.info(f"[{self.bi}] Loaded winning plan from tournament_summary in {plan_output_path}")
                     return winning_plan
 
-        raise ValueError(f"No tournament_summary with winning_plan found in {plan_output_path}")
+        # Try refinement/synthesis-style output (final_plan)
+        for step in run_history:
+            if step.get("step") in ["refinement_summary", "synthesis"]:
+                final_plan = step.get("final_plan")
+                if final_plan:
+                    logger.info(f"[{self.bi}] Loaded final plan from {step.get('step')} in {plan_output_path}")
+                    return final_plan
+
+        raise ValueError(
+            f"No plan found in {plan_output_path}. "
+            f"Expected tournament_summary.winning_plan, refinement_summary.final_plan, or synthesis.final_plan"
+        )
 
     def _query_with_cost(self, client: APIClient, query: list[dict[str, Any]]) -> tuple[list[dict], dict]:
         """Returns (conversation, cost_dict) directly from API response."""
@@ -148,11 +176,24 @@ class ConditionedSolverAgent(BaseAgent):
 
     def _generate_one_solution(self, plan: str) -> tuple[str, list[dict], dict]:
         """Generate a single solution conditioned on plan. Returns (solution, conversation, cost_dict)."""
-        prompt = self.conditioned_solver_template.render(
-            problem=self.stmt,
-            plan=plan
-        )
-        convo = [{"role": "user", "content": prompt}]
+
+        if self.use_completion_mode:
+            # Completion mode: plan appears as assistant's own reasoning
+            user_message = self.problem_only_template.render(problem=self.stmt)
+            assistant_prefix = self.assistant_plan_prefix_template.render(plan=plan)
+
+            convo = [
+                {"role": "user", "content": user_message},
+                {"role": "assistant", "content": assistant_prefix},
+            ]
+        else:
+            # Traditional mode: plan embedded in user prompt
+            prompt = self.conditioned_solver_template.render(
+                problem=self.stmt,
+                plan=plan
+            )
+            convo = [{"role": "user", "content": prompt}]
+
         convo, call_cost = self._query_with_cost(self.client, convo)
         solution = convo[-1]["content"]
         return solution, convo, call_cost

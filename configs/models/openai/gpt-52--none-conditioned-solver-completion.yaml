@@ -1,0 +1,6 @@
+type: agent
+model_config: models/openai/gpt-52--none
+scaffold_config: agent_scaffolds/conditioned_solver_completion
+human_readable_id: GPT-5.2 (none) Conditioned Solver Completion Mode (M=4)
+n_solutions: 4
+plan_source_model: openai/gpt-52--branching-plan-d3

@@ -44,6 +44,7 @@ class AgentPool(BaseSolver):
         "best_of_n": BestOfNAgent,
         "plan_tournament": PlanTournamentAgent,
         "conditioned_solver": ConditionedSolverAgent,
+        "conditioned_solver_completion": ConditionedSolverAgent,  # Same agent, completion mode via config
         "plan_generation": PlanGenerationAgent,
         "plan_scoring": PlanScoringAgent,
         "plan_conditioned_response": PlanConditionedResponseAgent,

@@ -1,4 +1,4 @@
-scaffold_name: conditioned_solver
+scaffold_name: conditioned_solver_completion
 n_threads: 4                      # Threads for AgentPool (parallelization across problems)
 
 # Conditioned solver parameters
@@ -10,8 +10,8 @@ match_pool_size: 4                # Max concurrent tournament match requests
 # Format: "openai/gpt-52--none-plan-tournament" (relative to outputs/{competition}/)
 plan_source_model: null
 
-# Completion mode: treat plan as assistant's own reasoning (default: false for backward compatibility)
-use_completion_mode: false
+# Completion mode: treat plan as assistant's own reasoning
+use_completion_mode: true
 
 prompts:
   # Completion mode templates (used when use_completion_mode: true)
