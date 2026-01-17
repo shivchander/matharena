@@ -20,6 +20,9 @@ from matharena.solvers import (
     PlanScoringAgent,
     PlanConditionedResponseAgent,
     ResponseScoringAgent,
+    # TODO: Uncomment when agents are implemented (Issues #1 and #2)
+    # SequentialPlanRefinementAgent,
+    # BranchingPlanExplorationAgent,
 )
 
 
@@ -28,6 +31,14 @@ class AgentPool(BaseSolver):
     A solver that manages a pool of agents to solve problems.
     """
 
+    # Agent Registration:
+    # To add a new agent:
+    # 1. Create the agent class in src/matharena/solvers/{agent_name}.py
+    # 2. Add import in src/matharena/solvers/__init__.py
+    # 3. Add import above (line 11-26)
+    # 4. Register here with scaffold_name as key (must match configs/agent_scaffolds/{name}.yaml)
+    # 5. Create scaffold config in configs/agent_scaffolds/{name}.yaml with matching scaffold_name
+    # 6. Create model config in configs/models/{provider}/{model}--{scaffold}.yaml
     AGENT_CLASSES = {
         "selfcheck": SelfcheckAgent,
         "deepseek_agent": DeepSeekMathAgent,
@@ -38,6 +49,9 @@ class AgentPool(BaseSolver):
         "plan_scoring": PlanScoringAgent,
         "plan_conditioned_response": PlanConditionedResponseAgent,
         "response_scoring": ResponseScoringAgent,
+        # TODO: Uncomment when agents are implemented (Issues #1 and #2)
+        # "sequential_plan_refinement": SequentialPlanRefinementAgent,
+        # "branching_plan_exploration": BranchingPlanExplorationAgent,
     }
 
     def __init__(self, solver_config, default_prompt_template, default_api_client_args, last_chance_prompt):
