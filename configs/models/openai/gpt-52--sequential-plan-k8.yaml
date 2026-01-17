@@ -1,0 +1,5 @@
+type: agent
+human_readable_id: openai/gpt-52--sequential-plan-k8
+model_config: models/openai/gpt-52
+scaffold_config: agent_scaffolds/sequential_plan_refinement
+# Uses default max_refinements: 8 from scaffold

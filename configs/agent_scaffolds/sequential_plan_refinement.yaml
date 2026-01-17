@@ -1,0 +1,23 @@
+scaffold_name: sequential_plan_refinement
+n_threads: 8                    # Threads for AgentPool (parallelization across problems)
+
+# Sequential refinement parameters
+max_refinements: 8              # Maximum number of critique-refine iterations
+
+prompts:
+  initial_planner: |
+    Problem: {{problem}}
+
+    Generate a detailed plan for solving this problem. Consider multiple approaches and identify key steps.
+
+  critic_and_refine: |
+    Problem: {{problem}}
+    Current Plan: {{current_plan}}
+
+    Critique this plan. Identify gaps, errors, or improvements.
+    Decide if we should refine further or if this plan is sufficient.
+
+    Output format:
+    CRITIQUE: [your analysis]
+    DECISION: [STOP/CONTINUE]
+    REFINEMENT: [if CONTINUE, provide improved plan here]

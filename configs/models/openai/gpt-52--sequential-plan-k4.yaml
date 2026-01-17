@@ -1,0 +1,6 @@
+type: agent
+human_readable_id: openai/gpt-52--sequential-plan-k4
+model_config: models/openai/gpt-52
+scaffold_config: agent_scaffolds/sequential_plan_refinement
+# Override max_refinements to 4
+max_refinements: 4
