@@ -42,3 +42,6 @@ mds
 logs/
 scripts/euler/
 *.json
+
+# Claude Code local settings (user-specific)
+.claude/settings.local.json
