@@ -1,0 +1,48 @@
+scaffold_name: branching_plan_exploration
+n_threads: 8                    # Threads for AgentPool (parallelization across problems)
+
+# Branching exploration parameters
+max_branches: 4                 # Maximum tree depth (number of branching levels)
+branch_pool_size: 8             # Parallel workers per branching level
+
+prompts:
+  initial_planner: |
+    Problem: {{problem}}
+
+    Generate a plan for solving this problem. If you encounter decision points
+    or multiple viable approaches, mark them using the BRANCH_POINT format.
+
+    Format:
+    PLAN: [your plan text]
+    BRANCH_POINT: [description of the decision point or uncertainty]
+    OPTIONS: [Option 1 | Option 2 | Option 3]
+
+    If there are no major decision points, just provide the plan without BRANCH_POINT.
+
+  branch_continuation: |
+    Problem: {{problem}}
+    Current Path: {{current_path}}
+    Chosen Option: {{chosen_option}}
+
+    Continue planning from this option. If you encounter further decision points,
+    mark them using the BRANCH_POINT format. Otherwise, complete the plan.
+
+    Format:
+    PLAN: [your continued plan]
+    BRANCH_POINT: [description if there's another decision point]
+    OPTIONS: [Option 1 | Option 2 | Option 3]
+
+  plan_synthesis: |
+    Problem: {{problem}}
+
+    You have explored multiple planning paths. Below are all {{ num_plans }} leaf plans:
+
+    {% for item in leaf_plans %}
+    Plan {{ item.index }}:
+    {{ item.plan }}
+
+    {% endfor %}
+
+    Synthesize these into ONE comprehensive, coherent plan that incorporates
+    the best elements and insights from each path. The final plan should be
+    clear, well-structured, and ready to guide problem solving.

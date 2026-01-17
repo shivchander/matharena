@@ -12,6 +12,5 @@ from .plan_scoring_agent import PlanScoringAgent
 from .plan_conditioned_response_agent import PlanConditionedResponseAgent
 from .response_scoring_agent import ResponseScoringAgent
 from .sequential_plan_refinement_agent import SequentialPlanRefinementAgent
-# TODO: Uncomment when agent is implemented (Issue #2)
-# from .branching_plan_exploration_agent import BranchingPlanExplorationAgent
+from .branching_plan_exploration_agent import BranchingPlanExplorationAgent
 from .agent_pool import AgentPool

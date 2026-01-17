@@ -1,0 +1,6 @@
+type: agent
+human_readable_id: openai/gpt-52--none-branching-plan-d3
+model_config: models/openai/gpt-52--none
+scaffold_config: agent_scaffolds/branching_plan_exploration
+# Override max_branches to 3
+max_branches: 3

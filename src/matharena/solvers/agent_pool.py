@@ -21,8 +21,7 @@ from matharena.solvers import (
     PlanConditionedResponseAgent,
     ResponseScoringAgent,
     SequentialPlanRefinementAgent,
-    # TODO: Uncomment when agent is implemented (Issue #2)
-    # BranchingPlanExplorationAgent,
+    BranchingPlanExplorationAgent,
 )
 
 
@@ -50,8 +49,7 @@ class AgentPool(BaseSolver):
         "plan_conditioned_response": PlanConditionedResponseAgent,
         "response_scoring": ResponseScoringAgent,
         "sequential_plan_refinement": SequentialPlanRefinementAgent,
-        # TODO: Uncomment when agent is implemented (Issue #2)
-        # "branching_plan_exploration": BranchingPlanExplorationAgent,
+        "branching_plan_exploration": BranchingPlanExplorationAgent,
     }
 
     def __init__(self, solver_config, default_prompt_template, default_api_client_args, last_chance_prompt):
