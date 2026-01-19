@@ -1,0 +1,8 @@
+type: agent
+human_readable_id: openai/gpt-52--batch-plan-scoring
+model_config: models/openai/gpt-52--none
+scaffold_config: agent_scaffolds/plan_scoring
+plan_source_model: openai/gpt-52--batch-plan-gen
+# Reads plans from BatchPlanGenerationAgent history
+# Temperature optional for scoring model
+# temperature: 0.3

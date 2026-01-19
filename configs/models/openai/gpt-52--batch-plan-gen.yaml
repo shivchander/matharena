@@ -1,0 +1,8 @@
+type: agent
+human_readable_id: openai/gpt-52--batch-plan-gen
+model_config: models/openai/gpt-52--none
+scaffold_config: agent_scaffolds/batch_plan_generation
+# Number of plans per batch (defaults to scaffold's 16)
+# n_plans: 16
+# Temperature optional - defaults to model's default
+# temperature: 1.0

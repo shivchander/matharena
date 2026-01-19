@@ -22,12 +22,8 @@ selection_temperature: 1.0
 
 prompts:
   conditioned_solver: |
-    You are given a mathematical problem and a plan for solving it.
+    Please reason step by step, and put your final answer within \boxed{}.
 
-    Follow the plan step-by-step to solve the problem. Put your final answer within \boxed{}.
-
-    Problem:
     {{problem}}
 
-    Plan:
     {{plan}}

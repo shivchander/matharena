@@ -1,0 +1,8 @@
+type: agent
+human_readable_id: openai/gpt-52--batch-cond-resp
+model_config: models/openai/gpt-52--none
+scaffold_config: agent_scaffolds/plan_conditioned_response
+plan_score_source_model: openai/gpt-52--batch-plan-scoring
+# Use --n M at runner level to generate M solutions (M separate runs)
+# Temperature optional - defaults to model's default
+# temperature: 1.0

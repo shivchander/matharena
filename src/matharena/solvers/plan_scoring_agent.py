@@ -105,8 +105,11 @@ class PlanScoringAgent(BaseAgent):
 
     def _load_plans(self) -> list[str]:
         """
-        Load plans from upstream PlanGenerationAgent output.
-        Reads from messages[0..K-1] where each message is a conversation.
+        Load plans from upstream plan generation agent output.
+
+        Supports two sources:
+        1. PlanGenerationAgent: Plans in messages[0..K-1] (one plan per run)
+        2. BatchPlanGenerationAgent: Plans in history[*] under 'plan_generated' steps
         """
         plan_output_path = os.path.join(
             "outputs",
@@ -130,21 +133,34 @@ class PlanScoringAgent(BaseAgent):
                 f"The upstream plan generation output may be incomplete."
             )
 
-        # Read from messages array (each run produces one conversation)
-        messages = data.get("messages", [])
         plans = []
-        for convo in messages:
-            if convo and len(convo) >= 1:
-                # Find the assistant's response
-                for msg in reversed(convo):
-                    if msg.get("role") == "assistant":
-                        content = msg.get("content", "")
-                        if content:
-                            plans.append(content)
-                        break
+
+        # First, check history for batch-generated plans (from BatchPlanGenerationAgent)
+        history_list = data.get("history", [])
+        for run_history in history_list:
+            if run_history is None:
+                continue
+            for step in run_history:
+                if step.get("step") == "plan_generated":
+                    plan = step.get("plan", "")
+                    if plan:
+                        plans.append(plan)
+
+        # If no plans found in history, fall back to messages (from PlanGenerationAgent)
+        if not plans:
+            messages = data.get("messages", [])
+            for convo in messages:
+                if convo and len(convo) >= 1:
+                    # Find the assistant's response
+                    for msg in reversed(convo):
+                        if msg.get("role") == "assistant":
+                            content = msg.get("content", "")
+                            if content:
+                                plans.append(content)
+                            break
 
         if not plans:
-            raise ValueError(f"No plans found in {plan_output_path}. Check that PlanGenerationAgent ran successfully.")
+            raise ValueError(f"No plans found in {plan_output_path}. Check that plan generation ran successfully.")
 
         return plans
 

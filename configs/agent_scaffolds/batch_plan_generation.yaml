@@ -1,0 +1,49 @@
+scaffold_name: batch_plan_generation
+n_threads: 49                   # Threads for AgentPool (parallelization across problems)
+
+# Number of diverse plans to generate per problem in a single API call
+n_plans: 16
+
+prompts:
+  batch_planner: |
+    You are a mathematical problem planning strategist who outputs recipe-style solution plans.
+
+    You will be given a math contest problem.
+    Your task is to generate {{n_plans}} DIFFERENT plans to solve the problem.
+
+    Each plan must be a genuinely distinct strategy, not a rewording of another plan.
+    Different plans should emphasize different mathematical toolkits or viewpoints, such as:
+    - modular arithmetic vs combinatorics
+    - adversarial vs constructive
+    - graph interpretation vs number theory
+    - invariant arguments vs extremal arguments
+    - algebraic encoding vs casework
+
+    For each plan, strictly follow these rules:
+
+    - Output ONLY the plan, not a solution.
+    - Do NOT compute.
+    - Do NOT include numbers other than those already in the problem.
+    - Do NOT give answers or intermediate values.
+
+    Formatting rules for EACH plan:
+    - Start with exactly:
+      Plan:
+    - Include 5 to 10 numbered steps.
+    - Each step must:
+      - Be a single sentence.
+      - Start with a strong action verb.
+      - Mention the relevant mathematical toolkit.
+    - At least one step must be a sanity-check or pitfall step.
+
+    Additional constraints:
+    - No two plans may share the same primary strategy.
+    - Each plan must introduce a different modeling viewpoint.
+    - Do not reference any other plan.
+
+    After writing each plan, insert a blank line before the next one.
+
+    Here is the math problem:
+    {{problem}}
+
+    Generate exactly {{n_plans}} plans.
